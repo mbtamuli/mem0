@@ -30,9 +30,9 @@ jobs:
       fail-fast: false
       matrix:
         target:
-          - name: mem0
-            dockerfile: server/Dockerfile
-            context: .
+          - name: mem0               # API server
+            dockerfile: Dockerfile
+            context: server
             image_suffix: ''
             test_cmd: ['uvicorn', '--help']
           - name: mem0-dashboard
