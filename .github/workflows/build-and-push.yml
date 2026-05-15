@@ -31,7 +31,7 @@ jobs:
       matrix:
         target:
           - name: mem0               # API server
-            dockerfile: Dockerfile
+            dockerfile: server/Dockerfile
             context: server
             image_suffix: ''
             test_cmd: ['uvicorn', '--help']
@@ -83,21 +83,15 @@ jobs:
           context: ${{ matrix.target.context }}
           file: ${{ matrix.target.dockerfile }}
           push: ${{ github.event_name != 'pull_request' }}
+          load: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Smoke test (PR only)
+      - name: Smoke test
         if: github.event_name == 'pull_request'
         run: |
-          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/${{ matrix.target.name }}:${{ steps.meta.outputs.version }}"
-          docker run --rm "$IMAGE" ${{ join(matrix.target.test_cmd, ' ') }}
-          echo "Smoke test passed for ${{ matrix.target.name }}"
-
-      - name: Smoke test (push)
-        if: github.event_name != 'pull_request'
-        run: |
-          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/${{ matrix.target.name }}:${{ steps.meta.outputs.version }}"
-          docker run --rm "$IMAGE" ${{ join(matrix.target.test_cmd, ' ') }}
+          FIRST_TAG=$(echo "${{ steps.meta.outputs.tags }}" | head -1 | tr -d '[:space:]')
+          docker run --rm "$FIRST_TAG" ${{ join(matrix.target.test_cmd, ' ') }}
           echo "Smoke test passed for ${{ matrix.target.name }}"
