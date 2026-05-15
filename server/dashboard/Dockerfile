@@ -2,14 +2,17 @@ FROM node:22-alpine AS base
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
+# Install pnpm 10 (corepack resolves v11 which needs different build-approval config)
+RUN npm install -g pnpm@10
+
 # Dependencies
 FROM base AS deps
 COPY package.json yarn.lock* package-lock.json* pnpm-lock.yaml* ./
-COPY .npmrc ./
+COPY pnpm-workspace.yaml ./
 RUN \
   if [ -f yarn.lock ]; then yarn --frozen-lockfile --network-timeout 600000; \
   elif [ -f package-lock.json ]; then npm ci; \
-  elif [ -f pnpm-lock.yaml ]; then corepack enable pnpm && pnpm i --no-frozen-lockfile; \
+  elif [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile; \
   else npm install; \
   fi
 
