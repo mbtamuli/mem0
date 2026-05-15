@@ -56,6 +56,9 @@ jobs:
             type=ref,event=branch
             type=sha,prefix=sha-
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -64,6 +67,7 @@ jobs:
         with:
           context: ${{ matrix.target.context }}
           file: ${{ matrix.target.dockerfile }}
+          platforms: linux/amd64,linux/arm64
           push: false
           load: true
           tags: ${{ steps.meta.outputs.tags }}
@@ -144,6 +148,9 @@ jobs:
             org.opencontainers.image.title=Mem0 ${{ matrix.target.name }}
             org.opencontainers.image.description=Mem0 self-hosted ${{ matrix.target.name }} image
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -159,6 +166,7 @@ jobs:
         with:
           context: ${{ matrix.target.context }}
           file: ${{ matrix.target.dockerfile }}
+          platforms: linux/amd64,linux/arm64
           push: true
           load: true
           tags: ${{ steps.meta.outputs.tags }}
