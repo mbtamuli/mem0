@@ -1,0 +1,203 @@
+name: Build and Push Mem0 to GHCR
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'server/**'
+      - '.github/workflows/build-and-push.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'server/**'
+      - '.github/workflows/build-and-push.yml'
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Override image tag (e.g., "staging", "debug"). Defaults to branch name.'
+        required: false
+        type: string
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  # PR-only: build + smoke test, no GHCR login or push
+  build-test:
+    name: Build and Test
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - name: mem0
+            dockerfile: server/Dockerfile
+            context: server
+            test_port: 8000
+          - name: mem0-dashboard
+            dockerfile: server/dashboard/Dockerfile
+            context: server/dashboard
+            test_port: 3000
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.target.name }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=sha-
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and load
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.target.context }}
+          file: ${{ matrix.target.dockerfile }}
+          push: false
+          load: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test
+        run: |
+          TAG=$(echo "${{ steps.meta.outputs.tags }}" | head -1 | tr -d '[:space:]')
+          echo "Testing image: $TAG"
+          CONTAINER_NAME="mem0-test-${{ matrix.target.name }}-${{ github.sha }}"
+          docker run -d --name "$CONTAINER_NAME" -p ${{ matrix.target.test_port }}:${{ matrix.target.test_port }} "$TAG"
+
+          # Wait for container to be ready
+          RETRIES=15
+          for i in $(seq 1 $RETRIES); do
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:${{ matrix.target.test_port }} 2>/dev/null || echo "000")
+            if [ "$HTTP_CODE" != "000" ]; then
+              echo "HTTP $HTTP_CODE from ${{ matrix.target.name }} on attempt $i"
+              break
+            fi
+            echo "Waiting for ${{ matrix.target.name }}... (attempt $i/$RETRIES)"
+            sleep 2
+          done
+
+          # For dashboard, also try /api/health
+          if [ "${{ matrix.target.name }}" = "mem0-dashboard" ]; then
+            HEALTH_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:${{ matrix.target.test_port }}/api/health 2>/dev/null || echo "000")
+            echo "Health endpoint: HTTP $HEALTH_CODE"
+          fi
+
+          docker stop "$CONTAINER_NAME" 2>/dev/null || true
+          docker rm "$CONTAINER_NAME" 2>/dev/null || true
+          echo "Smoke test passed for ${{ matrix.target.name }}"
+
+  # Push/main + workflow_dispatch: build, smoke test, push to GHCR
+  publish:
+    name: Build and Publish
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - name: mem0
+            dockerfile: server/Dockerfile
+            context: server
+            test_port: 8000
+          - name: mem0-dashboard
+            dockerfile: server/dashboard/Dockerfile
+            context: server/dashboard
+            test_port: 3000
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.target.name }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=sha-
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=${{ inputs.image_tag }},enable=${{ github.event_name == 'workflow_dispatch' && inputs.image_tag != '' }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.title=Mem0 ${{ matrix.target.name }}
+            org.opencontainers.image.description=Mem0 self-hosted ${{ matrix.target.name }} image
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build, push, and load
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.target.context }}
+          file: ${{ matrix.target.dockerfile }}
+          push: true
+          load: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test
+        run: |
+          TAG=$(echo "${{ steps.meta.outputs.tags }}" | head -1 | tr -d '[:space:]')
+          echo "Testing image: $TAG"
+          CONTAINER_NAME="mem0-test-${{ matrix.target.name }}-${{ github.sha }}"
+          docker run -d --name "$CONTAINER_NAME" -p ${{ matrix.target.test_port }}:${{ matrix.target.test_port }} "$TAG"
+
+          # Wait for container to be ready
+          RETRIES=15
+          for i in $(seq 1 $RETRIES); do
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:${{ matrix.target.test_port }} 2>/dev/null || echo "000")
+            if [ "$HTTP_CODE" != "000" ]; then
+              echo "HTTP $HTTP_CODE from ${{ matrix.target.name }} on attempt $i"
+              break
+            fi
+            echo "Waiting for ${{ matrix.target.name }}... (attempt $i/$RETRIES)"
+            sleep 2
+          done
+
+          if [ "$HTTP_CODE" = "000" ]; then
+            echo "Smoke test FAILED for ${{ matrix.target.name }} — no HTTP response after $RETRIES attempts"
+            docker stop "$CONTAINER_NAME" 2>/dev/null || true
+            docker rm "$CONTAINER_NAME" 2>/dev/null || true
+            exit 1
+          fi
+
+          # For dashboard, also try /api/health
+          if [ "${{ matrix.target.name }}" = "mem0-dashboard" ]; then
+            HEALTH_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:${{ matrix.target.test_port }}/api/health 2>/dev/null || echo "000")
+            echo "Health endpoint: HTTP $HEALTH_CODE"
+          fi
+
+          docker stop "$CONTAINER_NAME" 2>/dev/null || true
+          docker rm "$CONTAINER_NAME" 2>/dev/null || true
+          echo "Smoke test passed for ${{ matrix.target.name }}"
