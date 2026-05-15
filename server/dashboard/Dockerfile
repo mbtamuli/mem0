@@ -5,10 +5,11 @@ WORKDIR /app
 # Dependencies
 FROM base AS deps
 COPY package.json yarn.lock* package-lock.json* pnpm-lock.yaml* ./
+COPY .npmrc ./
 RUN \
   if [ -f yarn.lock ]; then yarn --frozen-lockfile --network-timeout 600000; \
   elif [ -f package-lock.json ]; then npm ci; \
-  elif [ -f pnpm-lock.yaml ]; then corepack enable pnpm && echo 'onlyBuiltDependencies[]=sharp' > /app/.npmrc && echo 'onlyBuiltDependencies[]=unrs-resolver' >> /app/.npmrc && pnpm i --no-frozen-lockfile; \
+  elif [ -f pnpm-lock.yaml ]; then corepack enable pnpm && pnpm i --no-frozen-lockfile; \
   else npm install; \
   fi
 
